@@ -1,1 +1,5 @@
-11111
+title: 个人网站
+description: 知识分享 for GitHub Pages.
+show_downloads: false
+google_analytics:
+theme: jekyll-theme-architect
