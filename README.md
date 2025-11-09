@@ -780,7 +780,7 @@
             source activate xtuner-env
 
             拉取 XTuner
-            git clone https://github.com/InternLM/xtuner.git   版本: <= 0.2.0 (旧版本)
+            git clone https://github.com/InternLM/xtuner.git   版本: <= 0.2.0 (旧版本 0.2.0rc版即可)
          
             安装依赖的
             cd xtuner
