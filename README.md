@@ -27,7 +27,7 @@
          1. 对量化前的模型部署验证
          2. LMDeploy部署/量化InternLM2.5
             2.1 LMDeploy Lite
-            2.2 离线转换TurboMind 格式          不推荐, 一般使用在线量化
+            2.2 离线转换TurboMind 格式          不推荐, 一般推荐使用在线量化
             2.3 TurboMind 推理+命令行本地对话
          3. 网页 Demo 演示
 
@@ -166,6 +166,11 @@
                   --batch-size 1 \
                   --search-scale False \
                   --work-dir /root/models/internlm2_5-7b-chat-w4a16-4bit
+
+             Loading calibrate dataset ...  执行时, 在加载量化校准数据集时, 下载不到该数据集而导致执行命令失败!!!!
+             该数据集是在国外的, 国内无法下载下来
+             不支持自定义数据集
+             通过梯子在本地下载该数据集,然后传到服务器中去也无法使用, 只能通过Huggingface上下载该数据集!!!
 
             命令解释：
                 lmdeploy lite auto_awq: lite这是LMDeploy的命令，用于启动量化过程，而auto_awq代表自动权重量化（auto-weight-quantization）。
