@@ -78,6 +78,8 @@
         #安装lmdeploy及其依赖
         pip install timm==1.0.8 openai==1.40.3 lmdeploy[all]==0.5.3
 
+####        这个环境搭建报错!!!
+
 ####   使用LMdeploy 验证模型
        在量化工作正式开始前，我们还需要验证一下获取的模型文件能否正常工作。进入创建好的环境并启动 InternLM2_5-7b-chat。
 
