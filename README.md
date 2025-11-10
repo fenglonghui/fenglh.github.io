@@ -1,181 +1,243 @@
-#### OpenCompass模型评测及安装使用
-    OpenCompass 是一个开源项目，旨在为机器学习和自然语言处理领域提供多功能、易于使用的工具和框架。
-        其中包含的多个开源模型和开源数据集（BenchMarks），方便进行模型的效果评测
+#### 大模型的分布式推理概述案例场景：
+     1.单卡显存不足：如QwQ-32B（320亿参数）需在双A6000显卡上部署。2.高并发请求：在线服务需同时处理多用户请求，分布式推理通过连续批处理（Continuous Batching）提升效率。
 
-    生成式大模型的评估指标
-        1. 核心评估指标
-           OpenCompass支持以下主要评估指标，覆盖生成式大模型的多样化需求：
-              a1 准确率（Accuracy）：用于选择题或分类任务，通过比对生成结果与标准答案计算正确率。在OpenCompass中通过metric=accuracy配置
-              a2 困惑度（Perplexity, PPL）：衡量模型对候选答案的预测能力，适用于选择题评估。需使用ppl类型的数据集配置（如ceval_ppl）
-              a3 生成质量（GEN）：通过文本生成结果提取答案，需结合后处理脚本解析输出。使用gen类型的数据集（如ceval_gen），配置metric=gen并指定后处理规则
-              a4 ROUGE/LCS：用于文本生成任务的相似度评估，需安装rouge==1.0.1依赖，并在数据配置中设置metric=rouge
-              a5 条件对数概率（CLP）：结合上下文计算答案的条件概率，适用于复杂推理任务，需在模型配置中启用use_logprob=True
+#### vLLM的分布式推理实现vLLM通过PagedAttention和张量并行技术优化显存管理和计算效率，支持多GPU推理。
+     1. 核心机制
+        张量并行：通过tensor_parallel_size参数指定GPU数量，模型自动拆分到多卡。
+        PagedAttention：将注意力机制的键值（KV）缓存分块存储，减少显存碎片，提升利用率。
+        连续批处理：动态合并不同长度的请求，减少GPU空闲时间。
 
-    支持的开源评估数据集及使用差异
-        主流开源数据集
-        OpenCompass内置超过70个数据集，覆盖五大能力维度：
-            a.知识类：C-Eval（中文考试题）、CMMLU（多语言知识问答）、MMLU（英文多选题）。
-            b.推理类：GSM8K（数学推理）、BBH（复杂推理链）。
-            c.语言类：CLUE（中文理解）、AFQMC（语义相似度）。
-            d.代码类：HumanEval（代码生成）、MBPP（编程问题）。
-            e.多模态类：MMBench（图像理解）、SEED-Bench（多模态问答）。
+#### LMDeploy的分布式推理实现LMDeploy是专为高效部署设计的框架，支持量化技术与分布式推理，尤其适合低显存环境。
+      1. 核心机制
+         张量并行：通过--tp参数指定GPU数量，支持多卡协同计算。KV Cache量化：支持INT8/INT4量化，降低显存占用。动态显存管理：通过--cache-max-entry-count控制KV缓存比例。
+
+#### LMDeploy 量化部署
+
+      LMDeploy 量化部署
+         1. 对量化前的模型部署验证
+         2. LMDeploy部署/量化InternLM2.5
+            2.1 LMDeploy Lite
+            2.2 离线转换TurboMind 格式
+            2.3 TurboMind 推理+命令行本地对话
+         3. 网页 Demo 演示
+
+####     1. 对量化前的模型部署验证
+            查询InternLM2.5-7b-chat的config.json文件可知，该模型的权重被存储为bfloat16格式：
+            {
+              "architectures": [
+              "InternLM2ForCausalLM"
+              ],
+              "attn_implementation": "eager",
+              "auto_map": {
+              "AutoConfig": "configuration_internlm2.InternLM2Config",
+              "AutoModelForCausalLM": "modeling_internlm2.InternLM2ForCausalLM",
+              "AutoModel": "modeling_internlm2.InternLM2ForCausalLM"
+              },
+              "bias": false,
+              "bos_token_id": 1,
+              "eos_token_id": 2,
+              "hidden_act": "silu",
+              "hidden_size": 4096,
+              "initializer_range": 0.02,
+              "intermediate_size": 14336,
+              "max_position_embeddings": 32768,
+              "model_type": "internlm2",
+              "num_attention_heads": 32,
+              "num_hidden_layers": 32,
+              "num_key_value_heads": 8,
+              "pad_token_id": 2,
+              "rms_norm_eps": 1e-05,
+              "rope_scaling": {
+              "type": "dynamic",
+              "factor": 2.0
+              },
+              "rope_theta": 1000000,
+              "tie_word_embeddings": false,
+              "torch_dtype": "bfloat16",
+              "transformers_version": "4.41.0",
+              "use_cache": true,
+              "vocab_size": 92544,
+              "pretraining_tp": 1
+            }
+
+        对于一个7B（70亿）参数的模型，每个参数使用16位浮点数（等于 2个 Byte）表示，则模型的权重大小约为：
+          70×10^9 parameters×2 Bytes/parameter=14GB
+          70亿个参数×每个参数占用2个字节=14GB
+          所以我们需要大于14GB的显存。
+
+####   创建环境，安装依赖
+        conda create -n lmdeploy python=3.10 -y
+        conda activate lmdeploy
+        conda install pytorch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 pytorchcuda=12.1 -c pytorch -c nvidia -y
+        #以上基础环境有的可以忽略
+        #安装lmdeploy及其依赖
+        pip install timm==1.0.8 openai==1.40.3 lmdeploy[all]==0.5.3
+
+####   使用LMdeploy 验证模型
+       在量化工作正式开始前，我们还需要验证一下获取的模型文件能否正常工作。进入创建好的环境并启动 InternLM2_5-7b-chat。
+
+       lmdeploy chat /root/models/internlm2_5-7b-chat
+
+####   2. LMDeploy部署/量化InternLM2.5
+
+          InternLM2.5部署
+              lmdeploy serve api_server \
+                  /root/models/internlm2_5-7b-chat \
+                  --model-format hf \
+                  --quant-policy 0 \
+                  --server-name 0.0.0.0 \
+                  --server-port 23333 \
+                  --tp 1
+
+          命令说明：
+              lmdeploy serve api_server：这个命令用于启动API服务器。
+              /root/models/internlm2_5-7b-chat：这是模型的路径。
+              --model-format hf：这个参数指定了模型的格式。hf代表“Hugging Face”格式。
+              --quant-policy 0：这个参数指定了量化策略。
+              --server-name 0.0.0.0：这个参数指定了服务器的名称。在这里，0.0.0.0是一个特殊的IP地址，它表
+              示所有网络接口。
+              --server-port 23333：这个参数指定了服务器的端口号。在这里，23333是服务器将监听的端口号。
+              --tp 1：这个参数表示并行数量（GPU数量）。
+
+          启动完成日志输出
+             访问 http://127.0.0.1:23333/ ，可以看到API 信息
+
+          以命令行形式连接API服务器
+             lmdeploy serve api_client http://localhost:23333
+####   2.1 LMDeploy Lite
+           随着模型变得越来越大，我们需要一些大模型压缩技术来降低模型部署的成本，并提升模型的推理性能。LMDeploy 提供了权重量化和 k/v cache两种策略。          
+
+           设置最大kv cache缓存大小
+              kv cache是一种缓存技术，通过存储键值对的形式来复用计算结果，以达到提高性能和降低内存消耗的目的。
+              在大规模训练和推理中，kv cache可以显著减少重复计算量，从而提升模型的推理速度。理想情况下，kv cache全部存储于显存，以加快访存速度。
+              模型在运行时，占用的显存可大致分为三部分：模型参数本身占用的显存、kv cache占用的显存，以及
+              中间运算结果占用的显存。LMDeploy的kv cache管理器可以通过设置 --cache-max-entry-count 参数，
+              控制kv缓存占用剩余显存的最大比例。默认的比例为0.8。
+
+          设置kv 最大比例为0.4，执行如下命令：
+              lmdeploy chat /root/models/internlm2_5-7b-chat --cache-max-entry-count 0.4
+
+          设置在线 kv cache int4/int8 量化
+              自 v0.4.0 起，LMDeploy 支持在线 kv cache int4/int8 量化，量化方式为 per-head per-token 的非对称量化。
+              此外，通过 LMDeploy 应用 kv 量化非常简单，只需要设定 quant_policy 和 cache-max-entrycount 参数。
+              目前，LMDeploy 规定 qant_policy=4 表示 kv int4 量化， quant_policy=8 表示 kv int8量化。
+
+              lmdeploy serve api_server \
+                  /root/models/internlm2_5-7b-chat \
+                  --model-format hf \
+                  --quant-policy 4 \
+                  --cache-max-entry-count 0.4\
+                  --server-name 0.0.0.0 \
+                  --server-port 23333 \
+                  --tp 1
+
+          相比使用BF16精度的kv cache，int4的Cache可以在相同4GB的显存下只需要4位来存储一个数值，而BF16需要16位。这意味着int4的Cache可以存储的元素数量是BF16的四倍。
+
+          W4A16 模型量化和部署
+              准确说，模型量化是一种优化技术，旨在减少机器学习模型的大小并提高其推理速度。量化通过将模型
+              的权重和激活从高精度（如16位浮点数）转换为低精度（如8位整数、4位整数、甚至二值网络）来实
+              现。
+              那么标题中的W4A16又是什么意思呢？
+              W4：这通常表示权重量化为4位整数（int4）。这意味着模型中的权重参数将从它们原始的浮点表
+              示（例如FP32、BF16或FP16，Internlm2.5精度为BF16）转换为4位的整数表示。这样做可以显
+              著减少模型的大小。
+              A16：这表示激活（或输入/输出）仍然保持在16位浮点数（例如FP16或BF16）。激活是在神经网
+              络中传播的数据，通常在每层运算之后产生。
+              因此，W4A16的量化配置意味着：
+              权重被量化为4位整数。
+              激活保持为16位浮点数。
+
+         在最新的版本中，LMDeploy使用的是AWQ算法，能够实现模型的4bit权重量化。输入以下指令，执行量化工作。(本步骤耗时较长，请耐心等待)
+
+             lmdeploy lite auto_awq \
+                  /root/models/internlm2_5-7b-chat \
+                  --calib-dataset 'ptb' \
+                  --calib-samples 128 \
+                  --calib-seqlen 2048 \
+                  --w-bits 4 \
+                  --w-group-size 128 \
+                  --batch-size 1 \
+                  --search-scale False \
+                  --work-dir /root/models/internlm2_5-7b-chat-w4a16-4bit
+
+            命令解释：
+                lmdeploy lite auto_awq: lite这是LMDeploy的命令，用于启动量化过程，而auto_awq代表自动权重量化（auto-weight-quantization）。
+                /root/models/internlm2_5-7b-chat: 模型文件的路径。
+                --calib-dataset 'ptb': 这个参数指定了一个校准数据集，这里使用的是’ptb’（Penn Treebank，一
+                个常用的语言模型数据集）。
+                --calib-samples 128: 这指定了用于校准的样本数量—128个样本
+                --calib-seqlen 2048: 这指定了校准过程中使用的序列长度—1024
+                --w-bits 4: 这表示权重（weights）的位数将被量化为4位。
+                --work-dir /root/models/internlm2_5-7b-chat-w4a16-4bit: 这是工作目录的路径，用于存储量
+                化后的模型和中间结果。
+
+            等待推理完成，便可以直接在你设置的目标文件夹看到对应的模型文件。
+            推理后的模型和原本的模型区别是模型文件大小以及占据显存大小。
+            我们可以输入如下指令查看在当前目录中显示所有子目录的大小。
+
+        cd /root/models/
+        du -sh *
+
+        输出结果如下。(其余文件夹都是以软链接的形式存在的，不占用空间，故显示为0)
+            0 InternVL2-26B
+            0 internlm2_5-7b-chat
+            4.9G internlm2_5-7b-chat-w4a16-4bit
+           (lmdeploy) root@intern-studio-50009084:~/models#
 
 
-    数据集区别与选择
-       评估范式差异：
-          _gen后缀数据集：生成式评估，需后处理提取答案（如ceval_gen）
-          _ppl后缀数据集：困惑度评估，直接比对选项概率（如ceval_ppl）
-          领域覆盖：
-          C-Eval：侧重中文STEM和社会科学知识，包含1.3万道选择题
-          LawBench：法律领域专项评估，需额外克隆仓库并配置路径
-  
+        那么原模型大小呢？输入以下指令查看。
+            cd /root/share/new_models/Shanghai_AI_Laboratory/
+            du -sh *
 
-    1.基础安装
-    2. 安装 OpenCompass
-    3.数据集准备
-    4.配置评估任务
+        对比发现，模型的大小15G 和 4.9G ,差异还是比较大。
+        可以输入下面的命令启动量化后的模型
 
-    命令行（自定义HF模型）
-    命令行  配置文件
-    5.自定义数据集
-      数据集格式
-         选择题 ( mcq )
-         问答题 ( qa )
-    6.命令行列表
+            lmdeploy chat /root/models/internlm2_5-7b-chat-w4a16-4bit/ --model-format awq
+
+        W4A16 量化+ KV cache+KV cache 量化
+
+            输入以下指令，让我们同时启用量化后的模型、设定kv cache占用和kv cache int4量化。
+
+            lmdeploy serve api_server \
+                /root/models/internlm2_5-7b-chat-w4a16-4bit/ \
+                --model-format awq \
+                --quant-policy 4 \
+                --cache-max-entry-count 0.4\
+                --server-name 0.0.0.0 \
+                --server-port 23333 \
+                --tp 1
+
+      2.2 离线转换TurboMind 格式
+
+          离线转换需要在启动服务之前，将模型转为 lmdeploy TurboMind 的格式，如下所示。
+          # 转换模型（FastTransformer格式） TurboMind
+          lmdeploy convert internlm-chat-7b /path/to/internlm-chat-7b
+
+          执行完成后将会在当前目录生成一个 workspace 的文件夹。这里面包含的就是 TurboMind 和 Triton
+          “模型推理”需要到的文件。
+          目录如下图所示。
+
+            weights 和 tokenizer 目录分别放的是拆分后的参数和 Tokenizer。如果我们进一步查看 weights 的目录，就会发现参数是按层和模块拆开的，如下图所示
 
 
-OpenCompass 使用引导:
-    1.基础安装
-      使用Conda准备 OpenCompass 运行环境：
-      conda create --name opencompass python=3.10 -y
-      # conda create --name opencompass_lmdeploy python=3.10 -y
-      conda activate opencompass
-    
-    2. 安装 OpenCompass
-       git clone https://github.com/open-compass/opencompass opencompass
-       cd opencompass
-       pip install -e .
-    3.数据集准备
-      在 OpenCompass 项目根目录下运行下面命令，将数据集准备至 ${OpenCompass}/data 目录下：
-        wget https://github.com/opencompass/opencompass/releases/download/0.2.2.rc1/OpenCompassData-core20240207.zip
-        unzip OpenCompassData-core-20240207.zip
-    4.配置评估任务
-      命令行（自定义HF模型）
-      对于 HuggingFace 模型，用户可以通过命令行直接设置模型参数，无需额外的配置文件。例如，对于
-      internlm/internlm2-chat-1_8b 模型，可以使用以下命令进行评估：
-      python run.py \
-          --datasets demo_gsm8k_chat_gen demo_math_chat_gen \
-          --hf-path internlm/internlm2-chat-1_8b \
-          --debug
-      请注意，通过这种方式，OpenCompass 一次只评估一个模型，而其他方式可以一次评估多个模型。
-    
-      命令行
-        用户可以使用 --models 和 --datasets 结合想测试的模型和数据集。
-        python run.py \
-          --models hf_internlm2_chat_1_8b hf_qwen2_1_5b_instruct \
-          --datasets demo_gsm8k_chat_gen demo_math_chat_gen \
-          --debug
-        模型和数据集的配置文件预存于 configs/models 和 configs/datasets 中。用户可以使用tools/list_configs.py 查看或过滤当前可用的模型和数据集配置。
-        
-        运行 python tools/list_configs.py llama mmlu 将产生如下输出：
-        +-----------------+-----------------------------------+
-        | Model | Config Path |
-        |-----------------+-----------------------------------|
-        | hf_llama2_13b | configs/models/hf_llama2_13b.py |
-        | hf_llama2_70b | configs/models/hf_llama2_70b.py |
-        | ... | ... |
-        +-----------------+-----------------------------------+
-        +-------------------+---------------------------------------------------+
-        | Dataset | Config Path |
-        |-------------------+---------------------------------------------------|
-        | cmmlu_gen | configs/datasets/cmmlu/cmmlu_gen.py |
-        | cmmlu_gen_ffe7c0 | configs/datasets/cmmlu/cmmlu_gen_ffe7c0.py |
-        | ... | ... |
-        +-------------------+---------------------------------------------------+
-    
-      用户可以使用第一列中的名称作为 python run.py 中 --models 和 --datasets 的输入参数。对于数据集，同一名称的不同后缀通常表示其提示或评估方法不同。
-      
-      配置文件
-          除了通过命令行配置实验外，OpenCompass 还允许用户在配置文件中编写实验的完整配置，并通过run.py 直接运行它。配置文件是以 Python 格式组织的，并且必须包括 datasets 和 models 字段。
-          from mmengine.config import read_base
-          with read_base():
-          from .datasets.demo.demo_gsm8k_chat_gen import gsm8k_datasets
-          from .datasets.demo.demo_math_chat_gen import math_datasets
-          from .models.qwen.hf_qwen2_1_5b_instruct import models as
-          hf_qwen2_1_5b_instruct_models
-          from .models.hf_internlm.hf_internlm2_chat_1_8b import models as
-          hf_internlm2_chat_1_8b_models
-          datasets = gsm8k_datasets + math_datasets
-          models = hf_qwen2_1_5b_instruct_models + hf_internlm2_chat_1_8b_models
-    
-    运行任务时，我们只需将配置文件的路径传递给 run.py ：
-      python run.py configs/eval_chat_demo.py --debug
-    
-    5.自定义数据集
-      数据集格式
-      选择题 ( mcq )
-    
-      对于选择 ( mcq ) 类型的数据，默认的字段如下：
-      question : 表示选择题的题干
-      A , B , C , …: 使用单个大写字母表示选项，个数不限定。默认只会从 A 开始，解析连续的字母作
-      为选项。
-      answer : 表示选择题的正确答案，其值必须是上述所选用的选项之一，如 A , B , C 等。
-      对于非默认字段，我们都会进行读入，但默认不会使用。如需使用，则需要在 .meta.json 文件中进行
-      指定。
-      .jsonl 格式样例如下：
-    
-          {"question": "165+833+650+615=", "A": "2258", "B": "2263", "C": "2281", "answer":
-        "B"}
-        {"question": "368+959+918+653+978=", "A": "3876", "B": "3878", "C": "3880",
-        "answer": "A"}
-        {"question": "776+208+589+882+571+996+515+726=", "A": "5213", "B": "5263", "C":
-        "5383", "answer": "B"}
-        {"question": "803+862+815+100+409+758+262+169=", "A": "4098", "B": "4128", "C":
-        "4178", "answer": "C"}
-    
-      .csv 格式样例如下:
-          question,A,B,C,answer
-          127+545+588+620+556+199=,2632,2635,2645,B
-          735+603+102+335+605=,2376,2380,2410,B
-          506+346+920+451+910+142+659+850=,4766,4774,4784,C
-          504+811+870+445=,2615,2630,2750,B
-    
-      问答题 ( qa )
-      对于问答 ( qa ) 类型的数据，默认的字段如下：
-      question : 表示问答题的题干
-      answer : 表示问答题的正确答案。可缺失，表示该数据集无正确答案。
-      对于非默认字段，我们都会进行读入，但默认不会使用。如需使用，则需要在 .meta.json 文件中进行
-      指定。
-      .jsonl 格式样例如下：
-    
-        {"question": "752+361+181+933+235+986=", "answer": "3448"}
-        {"question": "712+165+223+711=", "answer": "1811"}
-        {"question": "921+975+888+539=", "answer": "3323"}
-        {"question": "752+321+388+643+568+982+468+397=", "answer": "4519"}
-    
-      .csv 格式样例如下:
-          question,answer
-          123+147+874+850+915+163+291+604=,3967
-          149+646+241+898+822+386=,3142
-          332+424+582+962+735+798+653+214=,4700
-          649+215+412+495+220+738+989+452=,4170
-    
-    6.命令行列表
-    
-       自定义数据集可直接通过命令行来调用开始评测。
-    
-       python run.py \
-          --models hf_llama2_7b \
-          --custom-dataset-path xxx/test_mcq.csv \
-          --custom-dataset-data-type mcq \
-          --custom-dataset-infer-method ppl
-    
-      python run.py \
-          --models hf_llama2_7b \
-          --custom-dataset-path xxx/test_qa.jsonl \
-          --custom-dataset-data-type qa \
-          --custom-dataset-infer-method gen
-    
-    在绝大多数情况下， --custom-dataset-data-type 和 --custom-dataset-infer-method 可以省略，OpenCompass 会根据以下逻辑进行设置：
-        如果从数据集文件中可以解析出选项，如 A , B , C 等，则认定该数据集为 mcq ，否则认定为qa 。
-        默认 infer_method 为 gen 。
+          每一份参数第一个 0 表示“层”的索引，后面的那个0表示 Tensor 并行的索引，因为我们只有一张卡，所以被拆分成 1 份。
+          如果有两张卡可以用来推理，则会生成0和1两份，也就是说，会把同一个参数拆成两份。
+          比如 layers.0.attention.w_qkv.0.weight 会变成 layers.0.attention.w_qkv.0.weight 和 layers.0.attention.w_qkv.1.weight 。
+          执行 lmdeploy convert 命令时，可以通过 --tp 指定（tp 表示 tensor parallel，该参数默认值为1也就是一张卡）。
+
+      2.3 TurboMind 推理+命令行本地对话
+          模型转换完成后，我们就具备了使用模型推理的条件，接下来就可以进行真正的模型推理环节。
+          我们可以尝试本地对话，在这里其实是跳过 API Server 直接调用 TurboMind
+          执行命令如下。
+
+          lmdeploy chat ./workspace
+
+          启动后就可以和它进行对话了。
+
+      3. 网页 Demo 演示
+
+          这一部分主要是将 Gradio 作为前端 Demo 演示。
+          # Gradio+ApiServer。必须先开启 Server，此时 Gradio 为 Client
+          lmdeploy serve gradio http://0.0.0.0:23333
+
+          
